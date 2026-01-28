@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-// /api/validate?username=<name>&birthday=<yyyy-mm-dd>
+export const runtime = 'edge';
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const username = searchParams.get("username")
@@ -14,7 +15,6 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await fetch(robloxUrl, {
-      // A normal UA header helps avoid some 403 blocks
       headers: { "User-Agent": "Mozilla/5.0 (rbx-name-sniper)" },
       cache: "no-store",
     })
