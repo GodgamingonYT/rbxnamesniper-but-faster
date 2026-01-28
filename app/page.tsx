@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Moon, Sun, Download, Play, Square, ExternalLink, Target, Heart, Star } from "lucide-react"
+import { Moon, Sun, Download, Play, Square, ExternalLink, Target, ClipboardCopy } from "lucide-react"
 import { useTheme } from "next-themes"
 
 interface Config {
@@ -50,10 +50,8 @@ export default function RbxNameSniper() {
   const abortControllerRef = useRef<AbortController | null>(null)
   const foundCountRef = useRef(0)
 
-  const addLog = useCallback((message: string, type: "info" | "success" | "error" = "info") => {
-    const timestamp = new Date().toLocaleTimeString()
-    const prefix = type === "success" ? "✓" : type === "error" ? "✗" : "•"
-    setLogs((prev) => [...prev, `[${timestamp}] ${prefix} ${message}`].slice(-100))
+  const addLog = useCallback((message: string) => {
+    setLogs((prev) => [...prev, message].slice(-200))
   }, [])
 
   const makeUsername = (config: Config): string => {
@@ -64,58 +62,28 @@ export default function RbxNameSniper() {
       const consonants = "bcdfghjklmnpqrstvwxyz"
       let username = ""
       for (let i = 0; i < length; i++) {
-        if (i % 2 === 0) {
-          username += consonants[Math.floor(Math.random() * consonants.length)]
-        } else {
-          username += vowels[Math.floor(Math.random() * vowels.length)]
-        }
+        username += (i % 2 === 0) 
+          ? consonants[Math.floor(Math.random() * consonants.length)]
+          : vowels[Math.floor(Math.random() * vowels.length)]
       }
       return username
     } else if (method === "letters_only") {
       const letters = "abcdefghijklmnopqrstuvwxyz"
       return Array.from({ length }, () => letters[Math.floor(Math.random() * letters.length)]).join("")
-    } else if (method === "letters_underline") {
+    } else if (method.includes("_underline")) {
+      const chars = {
+        "letters_underline": "abcdefghijklmnopqrstuvwxyz",
+        "numbers_underline": "0123456789",
+        "letters_numbers_underline": "abcdefghijklmnopqrstuvwxyz0123456789"
+      }[method] || ""
+      
       if (length < 3) {
-        const letters = "abcdefghijklmnopqrstuvwxyz"
-        return Array.from({ length }, () => letters[Math.floor(Math.random() * letters.length)]).join("")
-      }
-      const letters = "abcdefghijklmnopqrstuvwxyz"
-      let username = ""
-      for (let i = 0; i < length; i++) {
-        username += letters[Math.floor(Math.random() * letters.length)]
-      }
-      const underscorePosition = Math.floor(Math.random() * (length - 2)) + 1
-      username = username.slice(0, underscorePosition) + "_" + username.slice(underscorePosition)
-      return username
-    } else if (method === "numbers_underline") {
-      if (length < 3) {
-        const numbers = "0123456789"
-        return Array.from({ length }, () => numbers[Math.floor(Math.random() * numbers.length)]).join("")
-      }
-      const numbers = "0123456789"
-      let username = ""
-      for (let i = 0; i < length; i++) {
-        username += numbers[Math.floor(Math.random() * numbers.length)]
-      }
-      const underscorePosition = Math.floor(Math.random() * (length - 2)) + 1
-      username = username.slice(0, underscorePosition) + "_" + username.slice(underscorePosition)
-      return username
-    } else if (method === "letters_numbers_underline") {
-      if (length < 3) {
-        const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
         return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("")
       }
-      const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-      let username = ""
-      for (let i = 0; i < length; i++) {
-        username += chars[Math.floor(Math.random() * chars.length)]
-      }
+
+      let username = Array.from({ length: length - 1 }, () => chars[Math.floor(Math.random() * chars.length)]).join("")
       const underscorePosition = Math.floor(Math.random() * (length - 2)) + 1
-      username = username.slice(0, underscorePosition) + "_" + username.slice(underscorePosition)
-      return username
-    } else if (method === "numbers_letters") {
-      const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-      return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("")
+      return username.slice(0, underscorePosition) + "_" + username.slice(underscorePosition)
     } else {
       const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
       return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("")
@@ -124,18 +92,13 @@ export default function RbxNameSniper() {
 
   const checkUsername = async (username: string, config: Config, signal: AbortSignal): Promise<number | null> => {
     try {
-      const url = `/api/validate?username=${encodeURIComponent(
-        username,
-      )}&birthday=${encodeURIComponent(config.birthday)}`
+      const url = `/api/validate?username=${encodeURIComponent(username)}&birthday=${encodeURIComponent(config.birthday)}`
       const response = await fetch(url, { signal })
-
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
       const data = await response.json()
       return data.code
     } catch (error: any) {
       if (error.name === "AbortError") throw error
-      console.error("Error checking username:", error)
       return null
     }
   }
@@ -150,11 +113,32 @@ export default function RbxNameSniper() {
     const controller = new AbortController()
     abortControllerRef.current = controller
 
-    addLog(`Starting generation with ${config.names} target usernames`, "info")
-    addLog(`Username length: ${config.length}, Method: ${config.method}`, "info")
-    addLog(`Concurrency level set to ${config.concurrency} threads`, "info")
+    const logBuffer: string[] = []
+    const resultsBuffer: UsernameResult[] = []
+
+    const createLogMessage = (message: string, type: "info" | "success" | "error" = "info") => {
+      const timestamp = new Date().toLocaleTimeString()
+      const prefix = type === "success" ? "✓" : type === "error" ? "✗" : "•"
+      return `[${timestamp}] ${prefix} ${message}`
+    }
+
+    logBuffer.push(createLogMessage(`Starting generation with ${config.names} target usernames`, "info"))
+    logBuffer.push(createLogMessage(`Username length: ${config.length}, Method: ${config.method}`, "info"))
+    logBuffer.push(createLogMessage(`Concurrency level set to ${config.concurrency} threads`, "info"))
 
     let totalAttempts = 0
+
+    const uiUpdater = setInterval(() => {
+      if (logBuffer.length > 0) {
+        addLog(logBuffer.join('\n'))
+        logBuffer.length = 0
+      }
+      if (resultsBuffer.length > 0) {
+        setResults((prev) => [...prev, ...resultsBuffer])
+        resultsBuffer.length = 0
+      }
+      setProgress((foundCountRef.current / config.names) * 100)
+    }, 200)
 
     const worker = async () => {
       while (foundCountRef.current < config.names && !controller.signal.aborted) {
@@ -168,25 +152,19 @@ export default function RbxNameSniper() {
           if (code === 0) {
             if (foundCountRef.current < config.names) {
               foundCountRef.current++
-              const result: UsernameResult = {
-                username,
-                status: "valid",
-                timestamp: new Date(),
-              }
-              setResults((prev) => [...prev, result])
-              addLog(`[${foundCountRef.current}/${config.names}] ✓ Found: ${username}`, "success")
-              setProgress((foundCountRef.current / config.names) * 100)
+              const result: UsernameResult = { username, status: "valid", timestamp: new Date() }
+              resultsBuffer.push(result)
+              logBuffer.push(createLogMessage(`[${foundCountRef.current}/${config.names}] Found: ${username}`, "success"))
             }
           } else if (code !== null) {
-            addLog(`✗ ${username} is taken`, "error")
+            logBuffer.push(createLogMessage(`${username} is taken`, "error"))
           } else {
-            addLog(`⚠ Error checking ${username}`, "error")
+            logBuffer.push(createLogMessage(`Error checking ${username}`, "error"))
           }
         } catch (error: any) {
-          if (error.name === "AbortError") {
-            break
+          if (error.name !== "AbortError") {
+            logBuffer.push(createLogMessage(`Error with ${username}: ${error.message}`, "error"))
           }
-          addLog(`Error with ${username}: ${error.message}`, "error")
         }
       }
     }
@@ -194,11 +172,18 @@ export default function RbxNameSniper() {
     const workers = Array(config.concurrency).fill(null).map(worker)
     await Promise.all(workers)
 
-    if (controller.signal.aborted) {
-      addLog("Generation stopped by user", "info")
-    } else {
-      addLog(`Generation complete! Found ${foundCountRef.current} valid usernames out of ${totalAttempts} attempts`, "success")
-    }
+    clearInterval(uiUpdater)
+
+    if (logBuffer.length > 0) addLog(logBuffer.join('\n'))
+    if (resultsBuffer.length > 0) setResults((prev) => [...prev, ...resultsBuffer])
+    setProgress((foundCountRef.current / config.names) * 100)
+    
+    const finalMessage = controller.signal.aborted
+      ? "Generation stopped by user"
+      : `Generation complete! Found ${foundCountRef.current} valid usernames out of ${totalAttempts} attempts`
+    
+    addLog(createLogMessage(finalMessage, controller.signal.aborted ? "info" : "success"))
+    
     setIsRunning(false)
   }
 
@@ -206,7 +191,6 @@ export default function RbxNameSniper() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
-    setIsRunning(false)
   }
 
   const downloadResults = () => {
@@ -222,6 +206,21 @@ export default function RbxNameSniper() {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
+
+  const copyResults = () => {
+    const validUsernames = results.filter((r) => r.status === "valid").map((r) => r.username);
+    if (validUsernames.length === 0) {
+      return;
+    }
+    const content = validUsernames.join("\n");
+    navigator.clipboard.writeText(content).then(() => {
+      const timestamp = new Date().toLocaleTimeString();
+      addLog(`[${timestamp}] ✓ Copied ${validUsernames.length} valid usernames to clipboard!`);
+    }, (err) => {
+      const timestamp = new Date().toLocaleTimeString();
+      addLog(`[${timestamp}] ✗ Failed to copy usernames.`);
+    });
+  };
 
   const validCount = results.filter((r) => r.status === "valid").length
 
@@ -341,10 +340,16 @@ export default function RbxNameSniper() {
                 )}
 
                 {validCount > 0 && !isRunning && (
-                  <Button onClick={downloadResults} variant="outline">
-                    <Download className="h-4 w-4 mr-2" />
-                    Download ({validCount})
-                  </Button>
+                  <>
+                    <Button onClick={copyResults} variant="outline">
+                      <ClipboardCopy className="h-4 w-4 mr-2" />
+                      Copy ({validCount})
+                    </Button>
+                    <Button onClick={downloadResults} variant="outline">
+                      <Download className="h-4 w-4 mr-2" />
+                      Download ({validCount})
+                    </Button>
+                  </>
                 )}
               </div>
             </CardContent>
@@ -356,7 +361,6 @@ export default function RbxNameSniper() {
                 Results
                 <div className="flex gap-2">
                   <Badge variant="secondary">{validCount} Valid</Badge>
-                  <Badge variant="outline">{results.length - validCount} Taken</Badge>
                 </div>
               </CardTitle>
               <CardDescription>
@@ -376,7 +380,7 @@ export default function RbxNameSniper() {
 
               <div className="space-y-2">
                 <Label>Activity Log</Label>
-                <div className="h-64 overflow-y-auto border rounded-md p-3 bg-muted/50">
+                <div className="h-64 overflow-y-auto border rounded-md p-3 bg-muted/50 whitespace-pre-wrap">
                   {logs.length === 0 ? (
                     <p className="text-muted-foreground text-sm">No activity yet...</p>
                   ) : (
@@ -391,71 +395,30 @@ export default function RbxNameSniper() {
                 </div>
               </div>
 
-              {results.length > 0 && (
-                <div className="space-y-2">
-                  <Label>Valid Usernames Found</Label>
-                  <div className="h-32 overflow-y-auto border rounded-md p-3">
-                    {results.filter((r) => r.status === "valid").length === 0 ? (
-                      <p className="text-muted-foreground text-sm">No valid usernames found yet...</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {results
-                          .filter((r) => r.status === "valid")
-                          .map((result, index) => (
-                            <div key={index} className="flex items-center justify-between text-sm">
-                              <span className="font-mono">{result.username}</span>
-                              <Badge variant="secondary" className="text-xs">
-                                Valid
-                              </Badge>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                  </div>
+              <div className="space-y-2">
+                <Label>Valid Usernames Found</Label>
+                <div className="h-32 overflow-y-auto border rounded-md p-3">
+                  {validCount === 0 ? (
+                    <p className="text-muted-foreground text-sm">No valid usernames found yet...</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {results
+                        .filter((r) => r.status === "valid")
+                        .map((result, index) => (
+                          <div key={index} className="flex items-center justify-between text-sm">
+                            <span className="font-mono">{result.username}</span>
+                            <Badge variant="secondary" className="text-xs">
+                              Valid
+                            </Badge>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
         </div>
-
-        <Card className="mt-8">
-          <CardContent className="pt-6">
-            <div className="text-center space-y-4">
-              <div className="flex items-center justify-center gap-2">
-                <Heart className="h-5 w-5 text-red-500" />
-                <h3 className="text-lg font-semibold">Support the Developer</h3>
-              </div>
-              <p className="text-muted-foreground max-w-2xl mx-auto">
-                If this tool helped you find great usernames, consider supporting the development! Your support helps
-                keep this project free and continuously improved.
-              </p>
-              <div className="flex flex-wrap gap-3 justify-center">
-                <Button asChild variant="default">
-                  <a
-                    href="https://github.com/4b1ss4l/rbxnamesniper"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center"
-                  >
-                    <Star className="h-4 w-4 mr-2" />
-                    Star on GitHub
-                  </a>
-                </Button>
-                <Button asChild variant="outline">
-                  <a
-                    href="https://www.roblox.com/pt/users/8826285307/inventory/#!/game-passes"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center"
-                  >
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    Visit Roblox Store
-                  </a>
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   )
