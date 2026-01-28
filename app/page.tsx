@@ -23,7 +23,7 @@ interface Config {
     | "numbers_underline"
     | "letters_numbers_underline"
     | "numbers_letters"
-  delay: number
+  concurrency: number
   birthday: string
 }
 
@@ -39,7 +39,7 @@ export default function RbxNameSniper() {
     names: 10,
     length: 5,
     method: "random",
-    delay: 0.5,
+    concurrency: 10,
     birthday: "1999-04-20",
   })
 
@@ -48,11 +48,12 @@ export default function RbxNameSniper() {
   const [progress, setProgress] = useState(0)
   const [logs, setLogs] = useState<string[]>([])
   const abortControllerRef = useRef<AbortController | null>(null)
+  const foundCountRef = useRef(0)
 
   const addLog = useCallback((message: string, type: "info" | "success" | "error" = "info") => {
     const timestamp = new Date().toLocaleTimeString()
     const prefix = type === "success" ? "✓" : type === "error" ? "✗" : "•"
-    setLogs((prev) => [...prev, `[${timestamp}] ${prefix} ${message}`])
+    setLogs((prev) => [...prev, `[${timestamp}] ${prefix} ${message}`].slice(-100))
   }, [])
 
   const makeUsername = (config: Config): string => {
@@ -144,48 +145,43 @@ export default function RbxNameSniper() {
     setResults([])
     setLogs([])
     setProgress(0)
+    foundCountRef.current = 0
 
     const controller = new AbortController()
     abortControllerRef.current = controller
 
     addLog(`Starting generation with ${config.names} target usernames`, "info")
     addLog(`Username length: ${config.length}, Method: ${config.method}`, "info")
+    addLog(`Concurrency level set to ${config.concurrency} threads`, "info")
 
-    let found = 0
-    let attempts = 0
+    let totalAttempts = 0
 
-    try {
-      while (found < config.names && !controller.signal.aborted) {
+    const worker = async () => {
+      while (foundCountRef.current < config.names && !controller.signal.aborted) {
+        totalAttempts++
         const username = makeUsername(config)
-        attempts++
 
         try {
           const code = await checkUsername(username, config, controller.signal)
+          if (controller.signal.aborted) break
 
           if (code === 0) {
-            found++
-            const result: UsernameResult = {
-              username,
-              status: "valid",
-              timestamp: new Date(),
+            if (foundCountRef.current < config.names) {
+              foundCountRef.current++
+              const result: UsernameResult = {
+                username,
+                status: "valid",
+                timestamp: new Date(),
+              }
+              setResults((prev) => [...prev, result])
+              addLog(`[${foundCountRef.current}/${config.names}] ✓ Found: ${username}`, "success")
+              setProgress((foundCountRef.current / config.names) * 100)
             }
-            setResults((prev) => [...prev, result])
-            addLog(`[${found}/${config.names}] ✓ Found: ${username}`, "success")
           } else if (code !== null) {
-            const result: UsernameResult = {
-              username,
-              status: "taken",
-              timestamp: new Date(),
-            }
-            setResults((prev) => [...prev, result])
             addLog(`✗ ${username} is taken`, "error")
           } else {
             addLog(`⚠ Error checking ${username}`, "error")
           }
-
-          setProgress((found / config.names) * 100)
-
-          await new Promise((resolve) => setTimeout(resolve, config.delay * 1000))
         } catch (error: any) {
           if (error.name === "AbortError") {
             break
@@ -193,12 +189,17 @@ export default function RbxNameSniper() {
           addLog(`Error with ${username}: ${error.message}`, "error")
         }
       }
-    } catch (error) {
-      addLog("Generation stopped", "info")
     }
 
+    const workers = Array(config.concurrency).fill(null).map(worker)
+    await Promise.all(workers)
+
+    if (controller.signal.aborted) {
+      addLog("Generation stopped by user", "info")
+    } else {
+      addLog(`Generation complete! Found ${foundCountRef.current} valid usernames out of ${totalAttempts} attempts`, "success")
+    }
     setIsRunning(false)
-    addLog(`Generation complete! Found ${found} valid usernames out of ${attempts} attempts`, "success")
   }
 
   const stopGeneration = () => {
@@ -206,7 +207,6 @@ export default function RbxNameSniper() {
       abortControllerRef.current.abort()
     }
     setIsRunning(false)
-    addLog("Generation stopped by user", "info")
   }
 
   const downloadResults = () => {
@@ -227,7 +227,6 @@ export default function RbxNameSniper() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="border-b">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -246,7 +245,6 @@ export default function RbxNameSniper() {
 
       <div className="container mx-auto px-4 py-8">
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Configuration Panel */}
           <Card>
             <CardHeader>
               <CardTitle>Configuration</CardTitle>
@@ -303,14 +301,17 @@ export default function RbxNameSniper() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="delay">Request Delay (seconds)</Label>
+                <Label htmlFor="concurrency">Concurrency (Threads)</Label>
                 <Input
-                  id="delay"
+                  id="concurrency"
                   type="number"
-                  min="0.1"
-                  step="0.1"
-                  value={config.delay}
-                  onChange={(e) => setConfig((prev) => ({ ...prev, delay: Number.parseFloat(e.target.value) || 0.5 }))}
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={config.concurrency}
+                  onChange={(e) =>
+                    setConfig((prev) => ({ ...prev, concurrency: Number.parseInt(e.target.value) || 10 }))
+                  }
                   disabled={isRunning}
                 />
               </div>
@@ -349,7 +350,6 @@ export default function RbxNameSniper() {
             </CardContent>
           </Card>
 
-          {/* Results Panel */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
@@ -418,7 +418,6 @@ export default function RbxNameSniper() {
           </Card>
         </div>
 
-        {/* Support Section */}
         <Card className="mt-8">
           <CardContent className="pt-6">
             <div className="text-center space-y-4">
