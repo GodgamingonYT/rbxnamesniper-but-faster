@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Moon, Sun, Download, Play, Square, ExternalLink, Target, ClipboardCopy } from "lucide-react"
+import { Moon, Sun, Download, Play, Square, Target, ClipboardCopy } from "lucide-react"
 import { useTheme } from "next-themes"
 
 interface Config {
@@ -44,15 +44,17 @@ export default function RbxNameSniper() {
   })
 
   const [isRunning, setIsRunning] = useState(false)
+  const isRunningRef = useRef(isRunning);
+
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
+
   const [results, setResults] = useState<UsernameResult[]>([])
   const [progress, setProgress] = useState(0)
   const [logs, setLogs] = useState<string[]>([])
   const abortControllerRef = useRef<AbortController | null>(null)
   const foundCountRef = useRef(0)
-
-  const addLog = useCallback((message: string) => {
-    setLogs((prev) => [...prev, message].slice(-200))
-  }, [])
 
   const makeUsername = (config: Config): string => {
     const { length, method } = config
@@ -113,8 +115,8 @@ export default function RbxNameSniper() {
     const controller = new AbortController()
     abortControllerRef.current = controller
 
-    const logBuffer: string[] = []
-    const resultsBuffer: UsernameResult[] = []
+    const logBuffer = useRef<string[]>([]);
+    const resultsBuffer = useRef<UsernameResult[]>([]);
 
     const createLogMessage = (message: string, type: "info" | "success" | "error" = "info") => {
       const timestamp = new Date().toLocaleTimeString()
@@ -122,75 +124,79 @@ export default function RbxNameSniper() {
       return `[${timestamp}] ${prefix} ${message}`
     }
 
-    logBuffer.push(createLogMessage(`Starting generation with ${config.names} target usernames`, "info"))
-    logBuffer.push(createLogMessage(`Username length: ${config.length}, Method: ${config.method}`, "info"))
-    logBuffer.push(createLogMessage(`Concurrency level set to ${config.concurrency} threads`, "info"))
+    logBuffer.current.push(createLogMessage(`Starting generation with ${config.names} target usernames`, "info"))
+    logBuffer.current.push(createLogMessage(`Username length: ${config.length}, Method: ${config.method}`, "info"))
+    logBuffer.current.push(createLogMessage(`Concurrency level set to ${config.concurrency} threads`, "info"))
 
     let totalAttempts = 0
 
-    const uiUpdater = setInterval(() => {
-      if (logBuffer.length > 0) {
-        addLog(logBuffer.join('\n'))
-        logBuffer.length = 0
+    const updateUI = () => {
+      if (!isRunningRef.current) return;
+      
+      if (logBuffer.current.length > 0) {
+        setLogs(prev => [...prev, ...logBuffer.current].slice(-200));
+        logBuffer.current = [];
       }
-      if (resultsBuffer.length > 0) {
-        setResults((prev) => [...prev, ...resultsBuffer])
-        resultsBuffer.length = 0
+      if (resultsBuffer.current.length > 0) {
+        setResults(prev => [...prev, ...resultsBuffer.current]);
+        resultsBuffer.current = [];
       }
-      setProgress((foundCountRef.current / config.names) * 100)
-    }, 200)
+      setProgress((foundCountRef.current / config.names) * 100);
+
+      requestAnimationFrame(updateUI);
+    };
+    requestAnimationFrame(updateUI);
 
     const worker = async () => {
-      while (foundCountRef.current < config.names && !controller.signal.aborted) {
-        totalAttempts++
-        const username = makeUsername(config)
+      while (foundCountRef.current < config.names && isRunningRef.current && !controller.signal.aborted) {
+        totalAttempts++;
+        const username = makeUsername(config);
 
         try {
-          const code = await checkUsername(username, config, controller.signal)
-          if (controller.signal.aborted) break
+          const code = await checkUsername(username, config, controller.signal);
+          if (controller.signal.aborted) break;
 
           if (code === 0) {
             if (foundCountRef.current < config.names) {
-              foundCountRef.current++
-              const result: UsernameResult = { username, status: "valid", timestamp: new Date() }
-              resultsBuffer.push(result)
-              logBuffer.push(createLogMessage(`[${foundCountRef.current}/${config.names}] Found: ${username}`, "success"))
+              foundCountRef.current++;
+              const result: UsernameResult = { username, status: "valid", timestamp: new Date() };
+              resultsBuffer.current.push(result);
+              logBuffer.current.push(createLogMessage(`[${foundCountRef.current}/${config.names}] Found: ${username}`, "success"));
             }
           } else if (code !== null) {
-            logBuffer.push(createLogMessage(`${username} is taken`, "error"))
+            logBuffer.current.push(createLogMessage(`${username} is taken`, "error"));
           } else {
-            logBuffer.push(createLogMessage(`Error checking ${username}`, "error"))
+            logBuffer.current.push(createLogMessage(`Error checking ${username}`, "error"));
           }
         } catch (error: any) {
           if (error.name !== "AbortError") {
-            logBuffer.push(createLogMessage(`Error with ${username}: ${error.message}`, "error"))
+            logBuffer.current.push(createLogMessage(`Error with ${username}: ${error.message}`, "error"));
           }
         }
       }
-    }
+    };
 
-    const workers = Array(config.concurrency).fill(null).map(worker)
-    await Promise.all(workers)
-
-    clearInterval(uiUpdater)
-
-    if (logBuffer.length > 0) addLog(logBuffer.join('\n'))
-    if (resultsBuffer.length > 0) setResults((prev) => [...prev, ...resultsBuffer])
-    setProgress((foundCountRef.current / config.names) * 100)
+    const workers = Array(config.concurrency).fill(null).map(worker);
+    await Promise.all(workers);
     
+    setIsRunning(false);
+
     const finalMessage = controller.signal.aborted
       ? "Generation stopped by user"
-      : `Generation complete! Found ${foundCountRef.current} valid usernames out of ${totalAttempts} attempts`
-    
-    addLog(createLogMessage(finalMessage, controller.signal.aborted ? "info" : "success"))
-    
-    setIsRunning(false)
+      : `Generation complete! Found ${foundCountRef.current} valid usernames out of ${totalAttempts} attempts`;
+
+    logBuffer.current.push(createLogMessage(finalMessage, controller.signal.aborted ? "info" : "success"));
+
+    setLogs(prev => [...prev, ...logBuffer.current].slice(-200));
+    setResults(prev => [...prev, ...resultsBuffer.current]);
+    setProgress((foundCountRef.current / config.names) * 100);
   }
 
   const stopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
+    setIsRunning(false);
   }
 
   const downloadResults = () => {
@@ -214,11 +220,9 @@ export default function RbxNameSniper() {
     }
     const content = validUsernames.join("\n");
     navigator.clipboard.writeText(content).then(() => {
-      const timestamp = new Date().toLocaleTimeString();
-      addLog(`[${timestamp}] ✓ Copied ${validUsernames.length} valid usernames to clipboard!`);
-    }, (err) => {
-      const timestamp = new Date().toLocaleTimeString();
-      addLog(`[${timestamp}] ✗ Failed to copy usernames.`);
+        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✓ Copied ${validUsernames.length} valid usernames to clipboard!`]);
+    }, () => {
+        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✗ Failed to copy usernames.`]);
     });
   };
 
@@ -380,7 +384,7 @@ export default function RbxNameSniper() {
 
               <div className="space-y-2">
                 <Label>Activity Log</Label>
-                <div className="h-64 overflow-y-auto border rounded-md p-3 bg-muted/50 whitespace-pre-wrap">
+                <div className="h-64 overflow-y-auto border rounded-md p-3 bg-muted/50">
                   {logs.length === 0 ? (
                     <p className="text-muted-foreground text-sm">No activity yet...</p>
                   ) : (
