@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -47,8 +47,36 @@ export default function RbxNameSniper() {
   const [results, setResults] = useState<UsernameResult[]>([])
   const [progress, setProgress] = useState(0)
   const [logs, setLogs] = useState<string[]>([])
+  
   const abortControllerRef = useRef<AbortController | null>(null)
   const foundCountRef = useRef(0)
+  const logBufferRef = useRef<string[]>([])
+  const resultsBufferRef = useRef<UsernameResult[]>([])
+
+  const createLogMessage = (message: string, type: "info" | "success" | "error" = "info") => {
+    const timestamp = new Date().toLocaleTimeString()
+    const prefix = type === "success" ? "✓" : type === "error" ? "✗" : "•"
+    return `[${timestamp}] ${prefix} ${message}`
+  }
+
+  useEffect(() => {
+    if (!isRunning) return
+
+    const intervalId = setInterval(() => {
+      if (logBufferRef.current.length > 0) {
+        setLogs(prev => [...prev, ...logBufferRef.current].slice(-200))
+        logBufferRef.current = []
+      }
+      if (resultsBufferRef.current.length > 0) {
+        setResults(prev => [...prev, ...resultsBufferRef.current])
+        resultsBufferRef.current = []
+      }
+      setProgress((foundCountRef.current / config.names) * 100)
+    }, 250)
+
+    return () => clearInterval(intervalId)
+  }, [isRunning, config.names])
+
 
   const makeUsername = (config: Config): string => {
     const { length, method } = config
@@ -100,41 +128,22 @@ export default function RbxNameSniper() {
   }
 
   const startGeneration = async () => {
-    setIsRunning(true)
     setResults([])
     setLogs([])
     setProgress(0)
     foundCountRef.current = 0
+    logBufferRef.current = []
+    resultsBufferRef.current = []
+    setIsRunning(true)
 
     const controller = new AbortController()
     abortControllerRef.current = controller
 
-    const logBuffer: string[] = []
-    const resultsBuffer: UsernameResult[] = []
-
-    const createLogMessage = (message: string, type: "info" | "success" | "error" = "info") => {
-      const timestamp = new Date().toLocaleTimeString()
-      const prefix = type === "success" ? "✓" : type === "error" ? "✗" : "•"
-      return `[${timestamp}] ${prefix} ${message}`
-    }
-
-    logBuffer.push(createLogMessage(`Starting generation with ${config.names} target usernames`, "info"))
-    logBuffer.push(createLogMessage(`Username length: ${config.length}, Method: ${config.method}`, "info"))
-    logBuffer.push(createLogMessage(`Concurrency level set to ${config.concurrency} threads`, "info"))
+    logBufferRef.current.push(createLogMessage(`Starting generation with ${config.names} target usernames`, "info"))
+    logBufferRef.current.push(createLogMessage(`Username length: ${config.length}, Method: ${config.method}`, "info"))
+    logBufferRef.current.push(createLogMessage(`Concurrency level set to ${config.concurrency} threads`, "info"))
 
     let totalAttempts = 0
-
-    const uiUpdateInterval = setInterval(() => {
-        if (logBuffer.length > 0) {
-            setLogs(prev => [...prev, ...logBuffer].slice(-200));
-            logBuffer.length = 0;
-        }
-        if (resultsBuffer.length > 0) {
-            setResults(prev => [...prev, ...resultsBuffer]);
-            resultsBuffer.length = 0;
-        }
-        setProgress((foundCountRef.current / config.names) * 100);
-    }, 250);
 
     const worker = async () => {
       while (foundCountRef.current < config.names && !controller.signal.aborted) {
@@ -149,40 +158,38 @@ export default function RbxNameSniper() {
             if (foundCountRef.current < config.names) {
               foundCountRef.current++
               const result: UsernameResult = { username, status: "valid", timestamp: new Date() }
-              resultsBuffer.push(result)
-              logBuffer.push(createLogMessage(`[${foundCountRef.current}/${config.names}] Found: ${username}`, "success"))
+              resultsBufferRef.current.push(result)
+              logBufferRef.current.push(createLogMessage(`[${foundCountRef.current}/${config.names}] Found: ${username}`, "success"))
             }
           } else if (code !== null) {
-            logBuffer.push(createLogMessage(`${username} is taken`, "error"))
+            logBufferRef.current.push(createLogMessage(`${username} is taken`, "error"))
           } else {
-            logBuffer.push(createLogMessage(`Error checking ${username}`, "error"))
+            logBufferRef.current.push(createLogMessage(`Error checking ${username}`, "error"))
           }
         } catch (error: any) {
           if (error.name !== "AbortError") {
-            logBuffer.push(createLogMessage(`Error with ${username}: ${error.message}`, "error"))
+            logBufferRef.current.push(createLogMessage(`Error with ${username}: ${error.message}`, "error"))
           }
         }
       }
     }
     
     try {
-        const workers = Array(config.concurrency).fill(null).map(worker);
-        await Promise.all(workers);
+        const workers = Array(config.concurrency).fill(null).map(worker)
+        await Promise.all(workers)
     } finally {
-        clearInterval(uiUpdateInterval);
-        setIsRunning(false);
-
-        setLogs(prev => [...prev, ...logBuffer].slice(-200));
-        setResults(prev => [...prev, ...resultsBuffer]);
-        
-        const finalProgress = (foundCountRef.current / config.names) * 100;
-        setProgress(finalProgress >= 100 ? 100 : finalProgress);
-
+        setIsRunning(false)
         const finalMessage = controller.signal.aborted
           ? "Generation stopped by user"
           : `Generation complete! Found ${foundCountRef.current} valid usernames out of ${totalAttempts} attempts`;
         
-        setLogs(prev => [...prev, createLogMessage(finalMessage, controller.signal.aborted ? "info" : "success")]);
+        logBufferRef.current.push(createLogMessage(finalMessage, controller.signal.aborted ? "info" : "success"));
+
+        setLogs(prev => [...prev, ...logBufferRef.current].slice(-200));
+        setResults(prev => [...prev, ...resultsBufferRef.current]);
+        
+        const finalProgress = (foundCountRef.current / config.names) * 100;
+        setProgress(finalProgress >= 100 ? 100 : finalProgress);
     }
   }
 
@@ -207,12 +214,6 @@ export default function RbxNameSniper() {
   }
 
   const copyResults = () => {
-    const createLogMessage = (message: string, type: "info" | "success" | "error" = "info") => {
-        const timestamp = new Date().toLocaleTimeString();
-        const prefix = type === "success" ? "✓" : type === "error" ? "✗" : "•";
-        return `[${timestamp}] ${prefix} ${message}`;
-    };
-
     const validUsernames = results.filter((r) => r.status === "valid").map((r) => r.username);
     if (validUsernames.length === 0) return;
     
