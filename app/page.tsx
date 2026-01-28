@@ -40,7 +40,7 @@ export default function RbxNameSniper() {
     names: 10,
     length: 5,
     method: "random",
-    concurrency: 5,
+    concurrency: 10,
     birthday: "1999-04-20",
   })
 
@@ -167,7 +167,6 @@ export default function RbxNameSniper() {
 
     logBufferRef.current.push(createLogMessage(`Initializing sniper...`, "info"))
     logBufferRef.current.push(createLogMessage(`Target: ${config.names} valid names`, "info"))
-    logBufferRef.current.push(createLogMessage(`Method: ${config.method}, Length: ${config.length}`, "info"))
 
     setLogs([...logBufferRef.current])
     logBufferRef.current = []
@@ -177,8 +176,6 @@ export default function RbxNameSniper() {
         const username = makeUsername(config)
 
         try {
-          await new Promise(r => setTimeout(r, 50 + (Math.random() * 50)))
-
           const code = await checkUsername(username, config, controller.signal)
           
           if (controller.signal.aborted) break
@@ -194,7 +191,6 @@ export default function RbxNameSniper() {
             logBufferRef.current.push(createLogMessage(`${username} : Taken (Code ${code})`, "info"))
           } else {
             logBufferRef.current.push(createLogMessage(`${username} : Check Failed`, "error"))
-            await new Promise(r => setTimeout(r, 1000))
           }
         } catch (error: any) {
           if (error.name !== "AbortError") {
@@ -212,7 +208,7 @@ export default function RbxNameSniper() {
         
         const aborted = controller.signal.aborted
         const finalMessage = aborted
-          ? "Process stopped by user."
+          ? "Process stopped."
           : `Complete! Found ${foundCountRef.current} valid names.`
         
         const finalLogs = [...logBufferRef.current, createLogMessage(finalMessage, aborted ? "info" : "success")]
@@ -295,7 +291,6 @@ export default function RbxNameSniper() {
                     id="names"
                     type="number"
                     min="1"
-                    max="1000"
                     value={config.names}
                     onChange={(e) => setConfig((prev) => ({ ...prev, names: Number.parseInt(e.target.value) || 10 }))}
                     disabled={isRunning}
@@ -307,7 +302,6 @@ export default function RbxNameSniper() {
                     id="length"
                     type="number"
                     min="3"
-                    max="20"
                     value={config.length}
                     onChange={(e) => setConfig((prev) => ({ ...prev, length: Number.parseInt(e.target.value) || 5 }))}
                     disabled={isRunning}
@@ -343,16 +337,12 @@ export default function RbxNameSniper() {
                     id="concurrency"
                     type="number"
                     min="1"
-                    max="50"
                     value={config.concurrency}
                     onChange={(e) =>
                       setConfig((prev) => ({ ...prev, concurrency: Number.parseInt(e.target.value) || 5 }))
                     }
                     disabled={isRunning}
                   />
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    Rec: 5-10
-                  </span>
                 </div>
               </div>
 
